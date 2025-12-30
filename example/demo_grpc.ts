@@ -107,11 +107,14 @@ async function main() {
     const httpClient = new SuiClient({ transport: httpTransport });
 
     // === Estimate gas & tip 
-    const estimatedFee = await CaculateFee({ transaction: tx });
-    console.log("Estimated Fee:", estimatedFee);
+    const tipFee = await CaculateFee({ transaction: tx });
+    console.log("tip fee is:", tipFee);
 
-    tx.setGasBudget(estimatedFee.gasBudget);
-    AddTip(tx, estimatedFee.tipAmount);
+    tx.setGasBudget(tipFee.gasBudget);
+
+    // The required tip must exceed 1,000,000 mist
+    // and must exceed 5% of the gas budget
+    AddTip(tx, Math.max(Number(tipFee.tipAmount), 1000000));
 
     // Build transaction
     const transactionBytes = await tx.build({ client: httpClient });

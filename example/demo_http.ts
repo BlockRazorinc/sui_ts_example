@@ -61,10 +61,13 @@ async function main() {
         transaction: tx,
     });
 
-    console.log("Estimated Fee:", tipFee);
+    console.log("tip fee is:", tipFee);
 
     tx.setGasBudget(tipFee.gasBudget);
-    AddTip(tx, tipFee.tipAmount);
+
+    // The required tip must exceed 1,000,000 mist
+    // and must exceed 5% of the gas budget
+    AddTip(tx, Math.max(Number(tipFee.tipAmount), 1000000));
 
     // Build transaction
     const builtTx = await tx.build({ client });
