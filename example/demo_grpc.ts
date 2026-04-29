@@ -2,13 +2,11 @@ import { Transaction } from "@mysten/sui/transactions";
 import { Ed25519Keypair } from "@mysten/sui/keypairs/ed25519";
 import { decodeSuiPrivateKey } from "@mysten/sui/cryptography";
 import { SuiClient, SuiHTTPTransport, getFullnodeUrl } from "@mysten/sui/client";
-
 import * as grpc from "@grpc/grpc-js";
 import * as protoLoader from "@grpc/proto-loader";
 import path from "path";
-
 import { CaculateFee, AddTip } from "blockrazor-sui-sdk";
-
+import { CompressionFilter } from "@grpc/grpc-js/build/src/compression-filter.js";
 
 
 // Replace with your own private key
@@ -27,7 +25,7 @@ const RPC_URL = getFullnodeUrl("mainnet");
 const AUTH_TOKEN = "YOUR_AUTH_TOKEN";
 
 // Amount to send (in MIST)
-const SEND_AMOUNT_MIST = 100_000_000n;
+const SEND_AMOUNT_MIST = 1_000_000n;
 
 // Fixed gas price for demo
 const GAS_PRICE = 5_000;
@@ -47,10 +45,29 @@ const PROTO_FILE = path.join(
     "sui/rpc/v2/transaction_execution_service.proto"
 );
 
-/**
- * Create a gRPC client by loading proto definitions via proto-loader.
- */
+function forceIdentityGrpcEncoding() {
+    const proto = CompressionFilter.prototype as CompressionFilter & {
+        __identityEncodingPatched?: boolean;
+    };
+    if (proto.__identityEncodingPatched) {
+        return;
+    }
+
+    proto.__identityEncodingPatched = true;
+    proto.sendMetadata = async function (metadataPromise) {
+        const headers = await metadataPromise;
+        // Some gateways mis-handle grpc-js advertised encodings and treat
+        // the request as gzip-compressed even when the payload is identity.
+        headers.set("grpc-accept-encoding", "identity");
+        headers.set("accept-encoding", "identity");
+        headers.remove("grpc-encoding");
+        return headers;
+    };
+}
+
+
 function makeGrpcClient() {
+    forceIdentityGrpcEncoding();
     const pkgDef = protoLoader.loadSync(PROTO_FILE, {
         includeDirs: [PROTO_ROOT],
         keepCase: false,
@@ -62,22 +79,19 @@ function makeGrpcClient() {
 
     const loaded: any = grpc.loadPackageDefinition(pkgDef);
     const Svc = loaded.sui.rpc.v2.TransactionExecutionService;
-    return new Svc(GRPC_ADDR, grpc.credentials.createInsecure());
+    return new Svc(GRPC_ADDR, grpc.credentials.createInsecure(), {
+        "grpc.default_compression_algorithm": grpc.compressionAlgorithms.identity,
+    });
 }
 
 /**
  * ExecuteTransaction RPC call with auth metadata.
  */
-function grpcExecuteTransaction(
-    grpcClient: any,
-    req: any,
-    authToken: string
-): Promise<any> {
+function grpcExecuteTransaction(client: any, req: any, authToken: string): Promise<any> {
     return new Promise((resolve, reject) => {
         const md = new grpc.Metadata();
         md.set("auth_token", authToken);
-
-        grpcClient.ExecuteTransaction(req, md, (err: any, resp: any) => {
+        client.ExecuteTransaction(req, md, (err: any, resp: any) => {
             if (err) return reject(err);
             resolve(resp);
         });
@@ -102,19 +116,21 @@ async function main() {
 
     // JSON-RPC client used for tx.build()
     const httpTransport = new SuiHTTPTransport({
-        url: RPC_URL
+        url: RPC_URL,
+        rpc: {
+            headers: {
+                auth_token: AUTH_TOKEN,
+            },
+        },
     });
     const httpClient = new SuiClient({ transport: httpTransport });
 
     // === Estimate gas & tip 
-    const tipFee = await CaculateFee({ transaction: tx });
-    console.log("tip fee is:", tipFee);
+    const estimatedFee = await CaculateFee({ transaction: tx });
+    console.log("Estimated Fee:", estimatedFee);
 
-    tx.setGasBudget(tipFee.gasBudget);
-
-    // The required tip must exceed 1,000,000 mist
-    // and must exceed 5% of the gas budget
-    AddTip(tx, Math.max(Number(tipFee.tipAmount), 1000000));
+    tx.setGasBudget(estimatedFee.gasBudget);
+    AddTip(tx, Math.max(estimatedFee.tipAmount, 1_000_000));
 
     // Build transaction
     const transactionBytes = await tx.build({ client: httpClient });

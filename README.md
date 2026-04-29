@@ -41,9 +41,7 @@ To run the examples provided in the example/ directory, you can typically use ts
 
 Bash
 
-# Example command (check package.json for exact scripts)
-npm run example
-# or direct execution
-npx ts-node example/main.ts
+# direct execution
+npx ts-node example/demo_grpc.ts
 Note: Ensure you have configured your environment variables (e.g., SUI_RPC_URL, PRIVATE_KEY) if required by the examples.
 
